@@ -10,20 +10,32 @@
 
 namespace syndata::engine {
 
-// SD-001 intentionally preserves the small ArtMiner seam kind set only as a
-// transitional engine contract. SD-002 replaces this closed enum with stable
-// logical type IDs before SynData-native recipes are published.
-enum class DataKind {
-    scalar_field,
-    vector_field,
-    colour_field,
-    mask,
-    particle_set,
-    palette,
-    image,
+struct LogicalTypeRef final {
+    std::string type_id;
+    u32 semantic_version{1U};
+
+    friend bool operator==(const LogicalTypeRef&, const LogicalTypeRef&) = default;
 };
 
-[[nodiscard]] std::string_view to_string(DataKind kind) noexcept;
+struct LogicalTypeMetadata final {
+    LogicalTypeRef type;
+    // An input expecting this logical type also accepts these explicitly
+    // registered source types. Exact type/version identity is always accepted.
+    std::vector<LogicalTypeRef> accepted_sources;
+};
+
+class TypeRegistry final {
+public:
+    explicit TypeRegistry(std::vector<LogicalTypeMetadata> types = {});
+
+    [[nodiscard]] const LogicalTypeMetadata* find(std::string_view type_id, u32 semantic_version) const noexcept;
+    [[nodiscard]] const LogicalTypeMetadata* find_any_version(std::string_view type_id) const noexcept;
+    [[nodiscard]] bool is_compatible(const LogicalTypeRef& source, const LogicalTypeRef& target) const noexcept;
+    [[nodiscard]] const std::vector<LogicalTypeMetadata>& types() const noexcept { return types_; }
+
+private:
+    std::vector<LogicalTypeMetadata> types_;
+};
 
 enum class ParameterKind {
     integer,
@@ -60,7 +72,7 @@ struct MutationMetadata {
 
 struct PortSpec {
     std::string name;
-    DataKind kind{DataKind::scalar_field};
+    LogicalTypeRef type;
     bool required{true};
     bool allow_multiple{false};
 };
@@ -89,11 +101,6 @@ enum class NodeStateClass {
     state_boundary,
 };
 
-struct EvaluatorCapabilities {
-    bool cpu{false};
-    bool gpu{false};
-};
-
 struct NodeMetadata {
     std::string type_id;
     u32 semantic_version{1U};
@@ -101,20 +108,41 @@ struct NodeMetadata {
     std::vector<PortSpec> outputs;
     std::vector<ParameterSpec> parameters;
     NodeStateClass state_class{NodeStateClass::stateless};
-    EvaluatorCapabilities evaluators;
     std::vector<ParameterRelation> parameter_relations;
 };
 
 class NodeRegistry final {
 public:
-    explicit NodeRegistry(std::vector<NodeMetadata> nodes);
+    explicit NodeRegistry(std::vector<NodeMetadata> nodes = {});
 
-    [[nodiscard]] const NodeMetadata* find(std::string_view type_id) const noexcept;
+    [[nodiscard]] const NodeMetadata* find(std::string_view type_id, u32 semantic_version) const noexcept;
+    [[nodiscard]] const NodeMetadata* find_any_version(std::string_view type_id) const noexcept;
     [[nodiscard]] const std::vector<NodeMetadata>& nodes() const noexcept { return nodes_; }
 
 private:
     std::vector<NodeMetadata> nodes_;
 };
+
+struct EngineRegistry final {
+    TypeRegistry types;
+    NodeRegistry nodes;
+};
+
+enum class RegistryErrorCode {
+    invalid_identifier,
+    duplicate_logical_type,
+    duplicate_node_type,
+    unknown_compatibility_type,
+    unknown_port_type,
+    invalid_parameter_relation,
+};
+
+struct RegistryError final {
+    RegistryErrorCode code{};
+    std::string message;
+};
+
+[[nodiscard]] std::vector<RegistryError> validate_registry(const EngineRegistry& registry);
 
 struct Recipe;
 
@@ -122,11 +150,12 @@ enum class ValidationErrorCode {
     unsupported_schema_version,
     unsupported_evaluator_version,
     resource_limit,
-    invalid_render_settings,
     invalid_identifier,
     duplicate_node_id,
     unknown_node_type,
     unsupported_node_version,
+    unknown_logical_type,
+    unsupported_logical_type_version,
     duplicate_parameter,
     unknown_parameter,
     missing_parameter,
@@ -134,12 +163,13 @@ enum class ValidationErrorCode {
     parameter_out_of_domain,
     missing_node,
     unknown_port,
-    incompatible_port_kind,
+    incompatible_port_type,
     duplicate_edge,
     multiple_input_edges,
     missing_required_input,
     duplicate_output_name,
     cycle_detected,
+    invalid_registry,
 };
 
 struct ValidationError {
@@ -147,10 +177,14 @@ struct ValidationError {
     std::string message;
 };
 
-// No default/built-in catalog exists in SynData SD-001. Every caller supplies
-// the catalog whose semantics it intends to validate.
+// Intrinsic validation checks product-native schema/resource/identifier/reference
+// invariants that do not require a compiled domain catalog.
+[[nodiscard]] std::vector<ValidationError> validate_recipe_intrinsic(const Recipe& recipe);
+
+// Full validation additionally resolves node/port/logical-type semantics against
+// a caller-supplied registry. The generic engine owns no built-in domain catalog.
 [[nodiscard]] std::vector<ValidationError> validate_recipe(
     const Recipe& recipe,
-    const NodeRegistry& registry);
+    const EngineRegistry& registry);
 
 }  // namespace syndata::engine
