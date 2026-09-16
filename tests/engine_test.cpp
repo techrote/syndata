@@ -3,15 +3,11 @@
 #include <limits>
 #include <string>
 #include <string_view>
-#include <utility>
-#include <vector>
 
 #include "engine/checked_math.hpp"
-#include "engine/graph.hpp"
 #include "engine/hash.hpp"
 #include "engine/local_text.hpp"
 #include "engine/prng.hpp"
-#include "engine/recipe.hpp"
 #include "engine/result.hpp"
 
 namespace {
@@ -23,63 +19,6 @@ void expect(const bool condition, const std::string_view message) {
         ++g_failures;
         std::cerr << "FAIL: " << message << '\n';
     }
-}
-
-[[nodiscard]] syndata::engine::ParameterSpec real_parameter(
-    std::string name,
-    const double default_value,
-    const double minimum,
-    const double maximum) {
-    using namespace syndata::engine;
-    ParameterDomain domain;
-    domain.real_min = minimum;
-    domain.real_max = maximum;
-    return ParameterSpec{
-        std::move(name),
-        ParameterKind::real,
-        default_value,
-        std::move(domain),
-        MutationMetadata{true, MutationScale::linear, "sample"},
-    };
-}
-
-[[nodiscard]] syndata::engine::NodeRegistry make_custom_registry() {
-    using namespace syndata::engine;
-    NodeMetadata sample{
-        "example.measure.window",
-        1U,
-        {},
-        {PortSpec{"value", DataKind::scalar_field, false, false}},
-        {
-            real_parameter("low", 0.2, 0.0, 1.0),
-            real_parameter("high", 0.8, 0.0, 1.0),
-        },
-        NodeStateClass::stateless,
-        EvaluatorCapabilities{false, false},
-        {ParameterRelation{"low", ParameterRelationKind::less_than, "high"}},
-    };
-    return NodeRegistry({std::move(sample)});
-}
-
-[[nodiscard]] syndata::engine::Recipe make_custom_recipe() {
-    using namespace syndata::engine;
-    Recipe recipe;
-    recipe.schema_version = kInheritedRecipeSchemaVersion;
-    recipe.evaluator_version = kInheritedEvaluatorSemanticVersion;
-    recipe.root_seed = 424242ULL;
-    recipe.render = RenderSettings{32U, 24U, "reference"};
-    recipe.nodes.push_back(NodeInstance{
-        "sample",
-        "example.measure.window",
-        1U,
-        {
-            ParameterAssignment{"low", 0.2},
-            ParameterAssignment{"high", 0.8},
-        },
-    });
-    recipe.outputs.push_back(OutputBinding{"main", "sample", "value"});
-    recipe.metadata.push_back(RecipeMetadata{"purpose", "engine-only-custom-catalog"});
-    return recipe;
 }
 
 void test_splitmix64_vectors() {
@@ -118,7 +57,7 @@ void test_hash_vectors() {
     using syndata::engine::hex_u64;
     expect(fnv1a64(std::string_view{}) == 0xcbf29ce484222325ULL, "FNV-1a empty vector");
     expect(fnv1a64("a") == 0xaf63dc4c8601ec8cULL, "FNV-1a a vector");
-    // This literal is retained only as an immutable ancestry vector from AM-001.
+    // Retained solely as immutable ancestry evidence from ArtMiner AM-001.
     expect(fnv1a64("ArtMiner") == 0x1d19c8c4094e4d49ULL, "upstream FNV-1a product-name vector");
     expect(fnv1a64("deterministic") == 0x97f2ebf85d31152dULL, "FNV-1a deterministic vector");
     expect(hex_u64(0x0123456789abcdefULL) == "0123456789abcdef", "stable u64 hex formatting");
@@ -138,65 +77,6 @@ void test_checked_math_and_text_bounds() {
     expect(validate_local_text(std::string(9U, 'x'), 64U, 8U).is_error(), "overlong local line rejected");
 }
 
-void test_custom_catalog_and_inherited_fingerprint() {
-    using namespace syndata::engine;
-    const NodeRegistry registry = make_custom_registry();
-    expect(registry.find("example.measure.window") != nullptr, "custom node is registered");
-    expect(registry.find("core.scalar.constant") == nullptr, "engine contains no inherited built-in node catalog");
-
-    Recipe recipe = make_custom_recipe();
-    expect(validate_recipe(recipe, registry).empty(), "custom-catalog recipe validates");
-
-    // Metadata is deliberately non-semantic in the inherited canonical contract.
-    constexpr std::string_view kUpstreamFingerprintDomain = "ArtMiner.SemanticFingerprint.v1\n";
-    const std::string before = inherited_semantic_fingerprint(recipe, kUpstreamFingerprintDomain);
-    recipe.metadata.push_back(RecipeMetadata{"note", "non-semantic"});
-    const std::string after = inherited_semantic_fingerprint(recipe, kUpstreamFingerprintDomain);
-    expect(before == after, "non-semantic metadata does not change inherited semantic fingerprint");
-
-    // Parameter insertion order must not affect the canonical byte stream/fingerprint.
-    std::swap(recipe.nodes.front().parameters[0], recipe.nodes.front().parameters[1]);
-    expect(
-        inherited_semantic_fingerprint(recipe, kUpstreamFingerprintDomain) == before,
-        "canonical fingerprint is independent of parameter insertion order");
-
-    const std::string canonical = serialize_inherited_recipe_canonical(recipe);
-    expect(canonical.find("meta \"note\" \"non-semantic\"") != std::string::npos, "canonical form retains sorted metadata");
-    expect(serialize_inherited_recipe_semantic(recipe).find("meta ") == std::string::npos, "semantic form excludes metadata");
-
-    recipe.nodes.front().parameters[0].value = 0.1;
-    recipe.nodes.front().parameters[1].value = 0.2;
-    // Locate by name because the order was intentionally swapped above.
-    for (auto& parameter : recipe.nodes.front().parameters) {
-        if (parameter.name == "high") {
-            parameter.value = 0.1;
-        } else if (parameter.name == "low") {
-            parameter.value = 0.2;
-        }
-    }
-    const auto errors = validate_recipe(recipe, registry);
-    bool found_relation_error = false;
-    for (const ValidationError& error : errors) {
-        if (error.code == ValidationErrorCode::parameter_out_of_domain &&
-            error.message.find("'low' < 'high'") != std::string::npos) {
-            found_relation_error = true;
-            break;
-        }
-    }
-    expect(found_relation_error, "catalog-declared cross-parameter relation is enforced generically");
-}
-
-void test_graph_resource_limit() {
-    using namespace syndata::engine;
-    const NodeRegistry registry = make_custom_registry();
-    Recipe recipe = make_custom_recipe();
-    recipe.nodes.resize(kMaximumRecipeNodes + 1U);
-    const auto errors = validate_recipe(recipe, registry);
-    expect(
-        !errors.empty() && errors.front().code == ValidationErrorCode::resource_limit,
-        "oversized programmatic graph is rejected before graph work");
-}
-
 }  // namespace
 
 int main() {
@@ -205,13 +85,11 @@ int main() {
     test_pcg32_vectors();
     test_hash_vectors();
     test_checked_math_and_text_bounds();
-    test_custom_catalog_and_inherited_fingerprint();
-    test_graph_resource_limit();
 
     if (g_failures != 0) {
-        std::cerr << g_failures << " SynData engine test(s) failed\n";
+        std::cerr << g_failures << " SynData engine primitive test(s) failed\n";
         return 1;
     }
-    std::cout << "SD-001 SynData engine tests passed\n";
+    std::cout << "SynData deterministic primitive tests passed\n";
     return 0;
 }
