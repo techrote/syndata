@@ -1,0 +1,9 @@
+# SynData SD-002 native recipe example
+sdr 1
+evaluator 1
+seed 42
+node source example.source 1
+node sink example.sink 1
+edge source value sink input
+output main sink value
+meta purpose "format-and-cli-example"
