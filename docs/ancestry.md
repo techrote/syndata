@@ -27,25 +27,33 @@ SD-001 ports or adapts these generic contracts into the `syndata::engine` namesp
 - checked allocation-size arithmetic;
 - bounded local UTF-8 text validation/read helpers;
 - generic node registry mechanics;
-- graph validation, typed ports, parameter domains and catalog-declared parameter relations;
+- graph validation, parameter domains and catalog-declared parameter relations;
 - explicit state-boundary treatment for ordinary-cycle validation;
-- the inherited in-memory recipe model, canonical ordering and semantic fingerprint machinery used by the AM-016 engine-only proof.
+- deterministic canonical ordering/fingerprint mechanics used to prove the engine extraction.
 
-The deterministic PRNG/hash/seed vectors from the upstream tests are copied as regression evidence. A test-only upstream fingerprint domain string is retained solely to prove the inherited canonical fingerprint path; the SynData engine does not hard-code ArtMiner product identity.
+The deterministic PRNG/hash/seed vectors from the upstream tests remain regression evidence.
 
 ## Deliberate adaptations
 
-These changes are intentional and do not alter the inherited PRNG/hash/seed behavior:
+These changes were intentional and do not alter the inherited PRNG/hash/seed behavior:
 
-1. namespaces and build targets are renamed immediately to `syndata::engine` / `syndata_engine`;
-2. the Windows-only build gate is removed; Windows x64 and Linux x64 are both first-class headless build/test targets;
-3. no built-in node catalog exists in `syndata_engine`; callers must supply an explicit registry;
-4. no ArtMiner UI/platform/render/export/Quarry layer is transplanted;
-5. SD-001 does **not** expose an ArtMiner `.amr` parser, file command or file extension as a SynData interface;
-6. the inherited canonical serializer exists only as a regression bridge for the engine-only proof. Its old `amr 1` byte prefix is not a SynData schema declaration;
-7. the old product-specific secondary fingerprint domain is caller-supplied by the ancestry test rather than embedded in engine code.
+1. namespaces and build targets were renamed immediately to `syndata::engine` / `syndata_engine`;
+2. the Windows-only build gate was removed; Windows x64 and Linux x64 are first-class headless build/test targets;
+3. no built-in node catalog exists in `syndata_engine`; callers supply explicit registries;
+4. no ArtMiner UI/platform/render/export/Quarry layer was transplanted;
+5. SD-001 did **not** expose an ArtMiner `.amr` parser, file command or file extension as a SynData interface.
 
-SD-002 is responsible for replacing the transitional closed data-kind enum and inherited recipe model with SynData-native logical type IDs, schema identity and execution contracts. Therefore no external SynData recipe format is declared by SD-001.
+### SD-002 resolution of transitional contracts
+
+SD-002 removes the remaining transitional inherited recipe/data-kind surface from the active engine contract:
+
+- the closed ArtMiner-derived `DataKind` enum is replaced by registered logical type IDs plus semantic versions;
+- the inherited in-memory `amr 1` canonical serializer/fingerprint bridge is replaced by the product-native `.sdr` / `sdr 1` schema;
+- the secondary fingerprint domain is now `SynData.Recipe.SemanticFingerprint.v1`;
+- ArtMiner `amr` input is explicitly rejected rather than reinterpreted;
+- execution planning and evaluator dispatch are SynData-native generic contracts.
+
+The old AM-016 canonical byte stream is therefore historical ancestry evidence, not an active SynData format/API. The immutable upstream commit remains the provenance point for the low-level deterministic mechanics.
 
 ## Explicitly excluded ArtMiner layers
 
@@ -61,8 +69,8 @@ The following were deliberately not copied:
 - ArtMiner workspace/session persistence and packaging layout;
 - example `.amr` art recipes and product UI resources.
 
-No semiconductor/process model, dataset layer, sampler/profile system, plugin ABI, GPU backend or GUI is introduced in SD-001.
+No semiconductor/process model, dataset layer, sampler/profile system, plugin ABI, GPU backend or GUI is introduced by SD-001/SD-002.
 
 ## Licence status
 
-The source repository has not selected a SynData software licence. SD-001 does not invent an SPDX identifier, licence header or distribution grant. The repository owner must make that decision explicitly in a later accepted change.
+The source repository has not selected a SynData software licence. The project does not invent an SPDX identifier, licence header or distribution grant. The repository owner must make that decision explicitly in a later accepted change.
